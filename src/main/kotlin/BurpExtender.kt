@@ -1,5 +1,6 @@
 package burp
 
+import burp.IRequestInfo.*
 import java.awt.Toolkit
 import java.awt.datatransfer.Clipboard
 import java.awt.datatransfer.StringSelection
@@ -20,6 +21,7 @@ class BurpExtender : IBurpExtender, IContextMenuFactory {
 
     companion object {
         const val EXTENSION_NAME = "Copy As Custom Format"
+        const val UNEXPECTED_HANDLING_MESSAGE = "[WARN] Copy manually if needed"
     }
 
     override fun registerExtenderCallbacks(callbacks: IBurpExtenderCallbacks?) {
@@ -48,21 +50,6 @@ class BurpExtender : IBurpExtender, IContextMenuFactory {
         return mutableListOf()
     }
 
-    /**
-     * Convert to following format:
-     *   <HTTP Method>\t<URL>\t<HTTP Request Body>\t<HTTP Response Body>\n
-     *   ...
-     * Note: If the body contains line breaks, it won't work as intended in Google Sheets.
-     */
-    private fun convert(items: Array<IHttpRequestResponse>): String {
-        val sb = StringBuilder()
-
-        items.forEach { http ->
-        }
-
-        return sb.toString()
-    }
-
     private inner class CopyListener(private val formattedItems: List<Formatting>) : MouseListener {
         override fun mouseReleased(e: MouseEvent?) {
             try {
@@ -79,6 +66,13 @@ class BurpExtender : IBurpExtender, IContextMenuFactory {
         override fun mouseExited(e: MouseEvent?) {}
     }
 
+
+    /**
+     * Convert to following format:
+     *   <HTTP Method>\t<URL>\t<HTTP Request Body>\t<HTTP Response Body>\n
+     *   ...
+     * Note: If the body contains line breaks, it won't work as intended in Google Sheets.
+     */
     private inner class Formatting(private val http: IHttpRequestResponse) {
         private var method: String = ""
         private var url: String = ""
@@ -87,22 +81,37 @@ class BurpExtender : IBurpExtender, IContextMenuFactory {
 
         init {
             try {
-                val req = helpers.analyzeRequest(http)
-                val res = helpers.analyzeResponse(http.response)
-
-                method = req.method
-                url = req.url.toString()
-                requestBody = http.request.decodeToString(req.bodyOffset)
-                responseBody = http.response.decodeToString(res.bodyOffset)
+                parseRequestBody()
+                parseResponseBody()
             } catch (e: Exception) { err(e) }
         }
 
         private fun parseRequestBody() {
+            val req = helpers.analyzeRequest(http)
 
+            val body = when(req.contentType) {
+                CONTENT_TYPE_JSON, CONTENT_TYPE_URL_ENCODED -> http.request.decodeToString(req.bodyOffset)
+                CONTENT_TYPE_NONE -> ""
+                else -> "$UNEXPECTED_HANDLING_MESSAGE (Unsupported Content-Type)"
+            }
+
+            method = req.method
+            url = req.url.toString()
+            requestBody = parseBody(body)
         }
 
         private fun parseResponseBody() {
+            val res = helpers.analyzeResponse(http.response)
+            responseBody = parseBody(http.response.decodeToString(res.bodyOffset))
+        }
 
+        private fun parseBody(body: String): String {
+            return if (body.contains("\n")) {
+                // If there is a new line character when pasting into Google sheets, it's troublesome.
+                "$UNEXPECTED_HANDLING_MESSAGE (New Line Existence)"
+            } else {
+                body
+            }
         }
 
         override fun toString(): String {
