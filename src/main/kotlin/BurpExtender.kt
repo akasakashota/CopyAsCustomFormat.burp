@@ -2,15 +2,15 @@ package burp
 
 import burp.IRequestInfo.*
 import java.awt.Toolkit
-import java.awt.datatransfer.Clipboard
-import java.awt.datatransfer.StringSelection
+import java.awt.datatransfer.*
 import java.awt.event.MouseEvent
 import java.awt.event.MouseListener
+import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.io.PrintWriter
-import java.lang.Exception
-import java.lang.RuntimeException
 import javax.swing.JMenuItem
-import kotlin.collections.MutableList
+import javax.swing.table.DefaultTableModel
+import javax.swing.table.TableModel
 
 
 class BurpExtender : IBurpExtender, IContextMenuFactory {
@@ -53,9 +53,17 @@ class BurpExtender : IBurpExtender, IContextMenuFactory {
     private inner class CopyListener(private val formattedItems: List<Formatting>) : MouseListener {
         override fun mouseReleased(e: MouseEvent?) {
             try {
+                val model = DefaultTableModel(0, 4)
+                for (item in formattedItems) {
+                    model.addRow(item.toArray())
+                }
+
                 val clip: Clipboard = Toolkit.getDefaultToolkit()!!.systemClipboard
-                val ss = StringSelection(formattedItems.joinToString("\n"))
-                clip.setContents(ss, ss)
+                clip.setContents(
+                    TableTransferable(model),
+                    ClipboardOwner { _, _ -> println("lost")}
+                )
+
                 out("Copied ${formattedItems.size} item(s).")
             } catch (e: Exception) { err(e) }
         }
@@ -115,7 +123,57 @@ class BurpExtender : IBurpExtender, IContextMenuFactory {
         }
 
         override fun toString(): String {
-            return arrayOf(method, url, requestBody, responseBody).joinToString("\t")
+            return toArray().joinToString("\t")
+        }
+
+        public fun toArray(): Array<String> {
+            return arrayOf(method, url, requestBody, responseBody)
+        }
+    }
+
+    class TableTransferable(private val table: TableModel) : Transferable {
+        companion object {
+            val HTML_DATA_FLAVOR = DataFlavor("text/html", "HTML")
+        }
+
+        override fun getTransferDataFlavors(): Array<DataFlavor> {
+            return arrayOf(HTML_DATA_FLAVOR)
+        }
+
+        override fun isDataFlavorSupported(flavor: DataFlavor): Boolean {
+            return transferDataFlavors.any {
+                it == flavor
+            }
+        }
+
+        @Throws(UnsupportedFlavorException::class, IOException::class)
+        override fun getTransferData(flavor: DataFlavor): Any {
+            val data: Any = if (HTML_DATA_FLAVOR.equals(flavor)) {
+                ByteArrayInputStream(formatAsHTML().toByteArray())
+            } else {
+                throw UnsupportedFlavorException(flavor)
+            }
+            return data
+        }
+
+        private fun formatAsHTML(): String {
+            val builder = StringBuilder()
+
+            builder.append("<table>")
+            for (i in 0 until table.rowCount) {
+                builder.append("<tr>")
+                for (j in 0 until table.columnCount) {
+                    val v = table.getValueAt(i, j)
+                    builder
+                        .append("<td>")
+                        .append(v?.toString() ?: "")
+                        .append("</td>")
+                }
+                builder.append("</tr>")
+            }
+            builder.append("</table>")
+
+            return builder.toString()
         }
     }
 
